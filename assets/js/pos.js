@@ -126,6 +126,16 @@ $.fn.serializeObject = function () {
   return o;
 };
 
+function toNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function toInteger(value, fallback = 0) {
+  const number = parseInt(value, 10);
+  return Number.isNaN(number) ? fallback : number;
+}
+
 auth = storage.get("auth");
 user = storage.get("user");
 
@@ -564,14 +574,17 @@ if (auth == undefined) {
 
     $.fn.qtIncrement = function (i) {
       item = cart[i];
+      const currentQuantity = toInteger(item.quantity, 1);
 
       let product = allProducts.filter(function (selected) {
         return selected._id == parseInt(item.id);
       });
 
       if (product[0].stock == 1) {
-        if (item.quantity < product[0].quantity) {
-          item.quantity += 1;
+        const availableQuantity = toInteger(product[0].quantity, currentQuantity);
+
+        if (currentQuantity < availableQuantity) {
+          item.quantity = currentQuantity + 1;
           $(this).renderTable(cart);
         } else {
           Swal.fire(
@@ -581,22 +594,36 @@ if (auth == undefined) {
           );
         }
       } else {
-        item.quantity += 1;
+        item.quantity = currentQuantity + 1;
         $(this).renderTable(cart);
       }
     };
 
     $.fn.qtDecrement = function (i) {
-      if (item.quantity > 1) {
-        item = cart[i];
-        item.quantity -= 1;
+      item = cart[i];
+      const currentQuantity = toInteger(item.quantity, 1);
+
+      if (currentQuantity > 1) {
+        item.quantity = currentQuantity - 1;
         $(this).renderTable(cart);
       }
     };
 
     $.fn.qtInput = function (i) {
       item = cart[i];
-      item.quantity = $(this).val();
+      let nextQuantity = Math.max(toInteger($(this).val(), 1), 1);
+      let product = allProducts.filter(function (selected) {
+        return selected._id == parseInt(item.id);
+      });
+
+      if (product[0]?.stock == 1) {
+        const availableQuantity = toInteger(product[0]?.quantity, nextQuantity);
+        if (availableQuantity >= 1) {
+          nextQuantity = Math.min(nextQuantity, availableQuantity);
+        }
+      }
+
+      item.quantity = nextQuantity;
       $(this).renderTable(cart);
     };
 
@@ -1018,7 +1045,7 @@ if (auth == undefined) {
             product_name: product.product_name,
             sku: product.sku,
             price: product.price,
-            quantity: product.quantity,
+            quantity: toInteger(product.quantity, 1),
           };
           cart.push(item);
         });
@@ -1041,7 +1068,7 @@ if (auth == undefined) {
             product_name: product.product_name,
             sku: product.sku,
             price: product.price,
-            quantity: product.quantity,
+            quantity: toInteger(product.quantity, 1),
           };
           cart.push(item);
         });
@@ -2192,35 +2219,32 @@ function loadTransactions() {
 
         if (counter == transactions?.length) {
           $("#total_sales #counter").text(
-            settings.symbol + parseFloat(sales).toFixed(2)
+            settings.symbol + toNumber(sales).toFixed(2)
           );
           $("#total_transactions #counter").text(transact);
 
           const result = {};
 
           for (const { product_name, price, quantity, id } of sold_items) {
-            if (!result[product_name]) result[product_name] = [];
-            result[product_name].push({ id, price, quantity });
+            const productKey = id || product_name;
+
+            if (!result[productKey]) {
+              result[productKey] = {
+                id: id,
+                product: product_name,
+                qty: 0,
+                price: toNumber(price),
+              };
+            }
+
+            result[productKey].qty += toInteger(quantity);
+            result[productKey].price = toNumber(
+              price,
+              result[productKey].price
+            );
           }
 
-          for (item in result) {
-            let price = 0;
-            let quantity = 0;
-            let id = 0;
-
-            result[item].forEach((i) => {
-              id = i.id;
-              price = i.price;
-              quantity += i.quantity;
-            });
-
-            sold.push({
-              id: id,
-              product: item,
-              qty: quantity,
-              price: price,
-            });
-          }
+          sold = Object.values(result);
 
           loadSoldProducts();
 
@@ -2275,8 +2299,16 @@ function loadSoldProducts() {
   let products = 0;
   $("#product_sales").empty();
 
+  if (sold.length === 0) {
+    $("#total_items #counter").text(0);
+    $("#total_products #counter").text(0);
+    return;
+  }
+
   sold.forEach((item, index) => {
-    items += item.qty;
+    const quantity = toInteger(item.qty);
+
+    items += quantity;
     products++;
 
     let product = allProducts?.filter(function (selected) {
@@ -2287,7 +2319,7 @@ function loadSoldProducts() {
 
     sold_list += `<tr>
             <td>${item?.product}</td>
-            <td>${item?.qty}</td>
+            <td>${quantity}</td>
             <td>${
               product[0]?.stock == 1
                 ? product.length > 0
@@ -2296,7 +2328,7 @@ function loadSoldProducts() {
                 : "N/A"
             }</td>
             <td>${
-              settings.symbol + (item?.qty * parseFloat(item.price))?.toFixed(2)
+              settings.symbol + (quantity * toNumber(item.price)).toFixed(2)
             }</td>
             </tr>`;
 
